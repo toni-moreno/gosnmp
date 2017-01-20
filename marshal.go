@@ -8,6 +8,7 @@ import (
 	"bytes"
 	"encoding/asn1"
 	"encoding/binary"
+	"errors"
 	"fmt"
 	"net"
 	"sync/atomic"
@@ -275,6 +276,15 @@ func (x *GoSNMP) send(packetOut *SnmpPacket, wait bool) (result *SnmpPacket, err
 		}
 	}
 	return result, err
+}
+
+func (packet *SnmpPacket) GetPDU(name string) (*SnmpPDU, error) {
+	for _, p := range packet.Variables {
+		if p.Name == name {
+			return &p, nil
+		}
+	}
+	return &SnmpPDU{}, errors.New("no matching PDU found")
 }
 
 // -- Marshalling Logic --------------------------------------------------------

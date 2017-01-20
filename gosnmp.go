@@ -127,6 +127,14 @@ type SnmpPDU struct {
 	Logger Logger
 }
 
+func (p *SnmpPDU) String() string {
+	return string(p.Value.([]byte))
+}
+
+func (p *SnmpPDU) BigInt() *big.Int {
+	return ToBigInt(p.Value)
+}
+
 // Asn1BER is the type of the SNMP PDU
 type Asn1BER byte
 
