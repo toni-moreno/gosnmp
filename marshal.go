@@ -119,7 +119,9 @@ func (x *GoSNMP) sendOneRequest(packetOut *SnmpPacket,
 		if retries > 0 {
 			x.logPrintf("Retry number %d. Last error was: %v", retries, err)
 			if time.Now().After(finalDeadline) {
+
 				err = fmt.Errorf("Request timeout (after %d retries)", retries-1)
+				x.lastError = err
 				break
 			}
 			if retries > x.Retries {
@@ -155,11 +157,13 @@ func (x *GoSNMP) sendOneRequest(packetOut *SnmpPacket,
 		if err != nil {
 			// Don't retry - not going to get any better!
 			err = fmt.Errorf("marshal: %v", err)
+			x.lastError = err
 			break
 		}
 
 		_, err = x.Conn.Write(outBuf)
 		if err != nil {
+			x.lastError = err
 			continue
 		}
 
@@ -190,6 +194,7 @@ func (x *GoSNMP) sendOneRequest(packetOut *SnmpPacket,
 			cursor, err = x.unmarshalHeader(resp, result)
 			if err != nil {
 				err = fmt.Errorf("Unable to decode packet: %s", err.Error())
+				x.lastError = err
 				continue
 			}
 
@@ -204,10 +209,12 @@ func (x *GoSNMP) sendOneRequest(packetOut *SnmpPacket,
 			err = x.unmarshalPayload(resp, cursor, result)
 			if err != nil {
 				err = fmt.Errorf("Unable to decode packet: %s", err.Error())
+				x.lastError = err
 				continue
 			}
 			if result == nil || len(result.Variables) < 1 {
 				err = fmt.Errorf("Unable to decode packet: nil")
+				x.lastError = err
 				continue
 			}
 
@@ -229,6 +236,7 @@ func (x *GoSNMP) sendOneRequest(packetOut *SnmpPacket,
 					}
 				}
 				err = fmt.Errorf("Out of order response")
+				x.lastError = err
 				continue
 			}
 
@@ -253,11 +261,13 @@ func (x *GoSNMP) send(packetOut *SnmpPacket, wait bool) (result *SnmpPacket, err
 	defer func() {
 		if e := recover(); e != nil {
 			err = fmt.Errorf("recover: %v", e)
+			x.lastError = err
 		}
 	}()
 
 	if x.Conn == nil {
-		return nil, fmt.Errorf("&GoSNMP.Conn is missing. Provide a connection or use Connect()")
+		x.lastError = fmt.Errorf("&GoSNMP.Conn is missing. Provide a connection or use Connect()")
+		return nil, x.lastError
 	}
 
 	if x.Retries < 0 {
@@ -586,10 +596,12 @@ func marshalVarbind(pdu *SnmpPDU) ([]byte, error) {
 
 func (x *GoSNMP) unmarshalHeader(packet []byte, response *SnmpPacket) (int, error) {
 	if len(packet) < 2 {
-		return 0, fmt.Errorf("Cannot unmarshal empty packet")
+		x.lastError = fmt.Errorf("Cannot unmarshal empty packet")
+		return 0, x.lastError
 	}
 	if response == nil {
-		return 0, fmt.Errorf("Cannot unmarshal response into nil packet reference")
+		x.lastError = fmt.Errorf("Cannot unmarshal response into nil packet reference")
+		return 0, x.lastError
 	}
 
 	response.Variables = make([]SnmpPDU, 0, 5)
@@ -599,19 +611,22 @@ func (x *GoSNMP) unmarshalHeader(packet []byte, response *SnmpPacket) (int, erro
 
 	// First bytes should be 0x30
 	if PDUType(packet[0]) != Sequence {
-		return 0, fmt.Errorf("Invalid packet header\n")
+		x.lastError = fmt.Errorf("Invalid packet header\n")
+		return 0, x.lastError
 	}
 
 	length, cursor := parseLength(packet)
 	if len(packet) != length {
-		return 0, fmt.Errorf("Error verifying packet sanity: Got %d Expected: %d\n", len(packet), length)
+		x.lastError = fmt.Errorf("Error verifying packet sanity: Got %d Expected: %d\n", len(packet), length)
+		return 0, x.lastError
 	}
 	x.logPrintf("Packet sanity verified, we got all the bytes (%d)", length)
 
 	// Parse SNMP Version
 	rawVersion, count, err := parseRawField(packet[cursor:], "version")
 	if err != nil {
-		return 0, fmt.Errorf("Error parsing SNMP packet version: %s", err.Error())
+		x.lastError = fmt.Errorf("Error parsing SNMP packet version: %s", err.Error())
+		return 0, x.lastError
 	}
 
 	cursor += count
@@ -623,13 +638,15 @@ func (x *GoSNMP) unmarshalHeader(packet []byte, response *SnmpPacket) (int, erro
 	if response.Version == Version3 {
 		cursor, err = x.unmarshalV3Header(packet, cursor, response)
 		if err != nil {
+			x.lastError = err
 			return 0, err
 		}
 	} else {
 		// Parse community
 		rawCommunity, count, err := parseRawField(packet[cursor:], "community")
 		if err != nil {
-			return 0, fmt.Errorf("Error parsing community string: %s", err.Error())
+			x.lastError = fmt.Errorf("Error parsing community string: %s", err.Error())
+			return 0, x.lastError
 		}
 		cursor += count
 		if community, ok := rawCommunity.(string); ok {
@@ -650,16 +667,19 @@ func (x *GoSNMP) unmarshalPayload(packet []byte, cursor int, response *SnmpPacke
 		response.PDUType = requestType
 		err = x.unmarshalResponse(packet[cursor:], response)
 		if err != nil {
-			return fmt.Errorf("Error in unmarshalResponse: %s", err.Error())
+			x.lastError = fmt.Errorf("Error in unmarshalResponse: %s", err.Error())
+			return x.lastError
 		}
 	case Trap:
 		response.PDUType = requestType
 		err = x.unmarshalTrapV1(packet[cursor:], response)
 		if err != nil {
-			return fmt.Errorf("Error in unmarshalTrapV1: %s", err.Error())
+			x.lastError = fmt.Errorf("Error in unmarshalTrapV1: %s", err.Error())
+			return x.lastError
 		}
 	default:
-		return fmt.Errorf("Unknown PDUType %#x", requestType)
+		x.lastError = fmt.Errorf("Unknown PDUType %#x", requestType)
+		return x.lastError
 	}
 	return nil
 }
@@ -669,14 +689,16 @@ func (x *GoSNMP) unmarshalResponse(packet []byte, response *SnmpPacket) error {
 
 	getResponseLength, cursor := parseLength(packet)
 	if len(packet) != getResponseLength {
-		return fmt.Errorf("Error verifying Response sanity: Got %d Expected: %d\n", len(packet), getResponseLength)
+		x.lastError = fmt.Errorf("Error verifying Response sanity: Got %d Expected: %d\n", len(packet), getResponseLength)
+		return x.lastError
 	}
 	x.logPrintf("getResponseLength: %d", getResponseLength)
 
 	// Parse Request-ID
 	rawRequestID, count, err := parseRawField(packet[cursor:], "request id")
 	if err != nil {
-		return fmt.Errorf("Error parsing SNMP packet request ID: %s", err.Error())
+		x.lastError = fmt.Errorf("Error parsing SNMP packet request ID: %s", err.Error())
+		return x.lastError
 	}
 	cursor += count
 	if requestid, ok := rawRequestID.(int); ok {

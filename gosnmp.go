@@ -98,6 +98,9 @@ type GoSNMP struct {
 
 	// Internal - used to sync requests to responses - snmpv3
 	msgID uint32
+
+	// Internal - used to store error descriotions.
+	lastError error
 }
 
 // Default connection settings
@@ -183,6 +186,14 @@ const (
 //
 // Public Functions (main interface)
 //
+
+func (x *GoSNMP) GetLastErrorString() string {
+	return x.lastError.Error()
+}
+
+func (x *GoSNMP) GetLastErrors() error {
+	return x.lastError
+}
 
 // Connect creates and opens a socket. Because UDP is a connectionless
 // protocol, you won't know if the remote host is responding until you send
